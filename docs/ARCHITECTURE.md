@@ -14,12 +14,18 @@ flowchart LR
     subgraph TeslaCloud["Tesla Cloud"]
         OAuth["OAuth 2.0"]
         Fleet["Fleet API"]
+        Telemetry["fleet-telemetry server"]
     end
     subgraph Backend["Azure Container Apps backend (Node, TypeScript)"]
         OAuthMod["TeslaOAuth + TokenStore"]
         FleetClient["FleetApi"]
         Sources["VehicleSource"]
+        TelemetrySrc["TeslaTelemetrySource"]
+        Cosmos["CosmosEventStore"]
         Hub["WsHub"]
+    end
+    subgraph Azure["Azure"]
+        CosmosDB[("Cosmos DB")]
     end
     subgraph iOS["iPhone TeslaDash (SwiftUI)"]
         Stream["VehicleStream"]
@@ -27,10 +33,15 @@ flowchart LR
     end
 
     Car -->|telemetry| Fleet
+    Car -->|telemetry| Telemetry
     OAuthMod -->|authorize / refresh| OAuth
     OAuthMod --> FleetClient
     FleetClient -->|bearer poll| Fleet
     FleetClient --> Sources --> Hub
+    Telemetry -->|POST decoded records| TelemetrySrc
+    TelemetrySrc --> Hub
+    TelemetrySrc -->|onState| Cosmos
+    Cosmos -->|managed identity write| CosmosDB
     Hub -->|wss VehicleState JSON| Stream
     Stream -->|bearer STREAM_TOKEN| Hub
     Stream --> UI
@@ -71,6 +82,28 @@ sequenceDiagram
     end
 ```
 
+## Telemetry ingestion and persistence
+
+```mermaid
+sequenceDiagram
+    participant FT as Tesla fleet-telemetry server
+    participant S as TeslaTelemetrySource (/telemetry/ingest)
+    participant H as WsHub
+    participant C as CosmosEventStore
+    participant DB as Cosmos DB
+    participant P as iPhone app
+
+    Note over FT,S: Push ingest (SOURCE=tesla_telemetry)
+    FT->>S: POST decoded records (Bearer TELEMETRY_INGEST_TOKEN)
+    S-->>S: map records to VehicleState (merge per VIN)
+    S->>H: emit VehicleState
+    H->>P: VehicleState JSON over wss
+    S->>C: onState(state, vin)
+    C->>DB: create item (managed identity, ttl 30d)
+    Note right of C: best-effort, failures logged not thrown
+    S-->>FT: 200 { ok, accepted }
+```
+
 ## Components
 
 | Layer | Component | Responsibility |
@@ -80,8 +113,11 @@ sequenceDiagram
 | Tesla Cloud | Fleet API | Serves `vehicle_data` to authenticated clients. |
 | Backend | TeslaOAuth + TokenStore | Runs the OAuth code exchange and caches tokens. |
 | Backend | FleetApi | Polls `vehicle_data` with a bearer token. |
-| Backend | VehicleSource | Abstracts the data source (Simulator or Tesla). |
+| Backend | VehicleSource | Abstracts the data source (Simulator, Tesla poll, or Tesla telemetry). |
+| Backend | TeslaTelemetrySource | HTTP sink for Tesla's fleet-telemetry server; maps pushed records to `VehicleState`. |
+| Backend | CosmosEventStore | Best-effort persistence of events to Cosmos DB with a 30-day TTL. |
 | Backend | WsHub | Broadcasts `VehicleState` to connected clients. |
+| Azure | Cosmos DB | Stores streamed events (`/vin` partition), least-privilege managed-identity writes. |
 | iOS | VehicleStream | WebSocket client that receives `VehicleState`. |
 | iOS | Dashboard | Renders the speedometer and heading-follow Apple Map. |
 

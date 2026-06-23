@@ -9,7 +9,7 @@ function required(name: string, value: string | undefined): string {
   return value;
 }
 
-export type SourceKind = 'simulator' | 'tesla';
+export type SourceKind = 'simulator' | 'tesla' | 'tesla_telemetry';
 export type { Unit } from './types.js';
 import type { Unit } from './types.js';
 
@@ -28,6 +28,22 @@ export interface Config {
     scopes: string;
     vin: string | null;
     tokenStorePath: string;
+  };
+  telemetry: {
+    /** Path the upstream fleet-telemetry server POSTs decoded JSON records to. */
+    ingestPath: string;
+    /** Shared secret guarding the ingest endpoint. Empty = open (local dev). */
+    ingestToken: string;
+  };
+  cosmos: {
+    /** Cosmos account endpoint, e.g. https://acct.documents.azure.com:443/. Empty = persistence disabled. */
+    endpoint: string;
+    /** Optional account key for local dev. Empty = use managed identity. */
+    key: string;
+    database: string;
+    container: string;
+    /** Per-document time-to-live in seconds (default 30 days). */
+    ttlSeconds: number;
   };
 }
 
@@ -57,6 +73,17 @@ export const config: Config = {
       'openid offline_access vehicle_device_data vehicle_location',
     vin: process.env.TESLA_VIN?.trim() || null,
     tokenStorePath: process.env.TOKEN_STORE_PATH ?? './.tokens.json',
+  },
+  telemetry: {
+    ingestPath: process.env.TELEMETRY_INGEST_PATH ?? '/telemetry/ingest',
+    ingestToken: process.env.TELEMETRY_INGEST_TOKEN?.trim() ?? '',
+  },
+  cosmos: {
+    endpoint: process.env.COSMOS_ENDPOINT?.trim() ?? '',
+    key: process.env.COSMOS_KEY?.trim() ?? '',
+    database: process.env.COSMOS_DATABASE ?? 'tesladash',
+    container: process.env.COSMOS_CONTAINER ?? 'events',
+    ttlSeconds: Number(process.env.COSMOS_TTL_SECONDS ?? 2592000),
   },
 };
 

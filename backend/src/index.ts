@@ -12,11 +12,14 @@ import { FleetApi } from './tesla/fleetApi.js';
 import { TokenStore } from './tesla/tokenStore.js';
 import { SimulatorSource } from './sources/SimulatorSource.js';
 import { TeslaSource } from './sources/TeslaSource.js';
+import { TeslaTelemetrySource } from './sources/TeslaTelemetrySource.js';
 import type { VehicleSource } from './sources/VehicleSource.js';
+import { CosmosEventStore } from './storage/cosmosStore.js';
 
 const app = express();
 const server = createServer(app);
 const hub = new WsHub();
+const store = new CosmosEventStore();
 
 // ── HTTP routes ─────────────────────────────────────────────────────────────
 app.get('/health', (_req, res) => {
@@ -61,11 +64,20 @@ wss.on('connection', (socket) => {
 function buildSource(): VehicleSource {
   if (config.source === 'tesla') {
     assertTeslaConfig();
-    const store = new TokenStore(config.tesla.tokenStorePath);
-    const oauth = new TeslaOAuth(store);
+    const tokenStore = new TokenStore(config.tesla.tokenStorePath);
+    const oauth = new TeslaOAuth(tokenStore);
     const api = new FleetApi(oauth);
     app.use('/auth', authRoutes(oauth));
     return new TeslaSource(api, config.primaryUnit, config.pollIntervalMs);
+  }
+  if (config.source === 'tesla_telemetry') {
+    return new TeslaTelemetrySource(
+      app,
+      config.telemetry.ingestPath,
+      config.telemetry.ingestToken,
+      config.primaryUnit,
+      (state, vin) => store.save(state, vin),
+    );
   }
   return new SimulatorSource(config.primaryUnit);
 }
@@ -79,7 +91,10 @@ server.listen(config.port, () => {
   if (config.source === 'tesla') {
     console.log(`  authorize: http://localhost:${config.port}/auth/login`);
   }
-  void source.start((msg) => hub.broadcast(msg));
+  void (async () => {
+    await store.init();
+    await source.start((msg) => hub.broadcast(msg));
+  })();
 });
 
 // ── Graceful shutdown ────────────────────────────────────────────────────────

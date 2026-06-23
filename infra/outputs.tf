@@ -28,3 +28,8 @@ output "registry_login_server" {
   description = "ACR login server hosting the backend image."
   value       = azurerm_container_registry.acr.login_server
 }
+
+output "cosmos_endpoint" {
+  description = "Cosmos DB account endpoint for the telemetry event store (empty when disabled)."
+  value       = var.enable_cosmos ? azurerm_cosmosdb_account.events[0].endpoint : ""
+}

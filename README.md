@@ -8,11 +8,16 @@ Apple Map that follows your heading, fed by **your** car's data through the
 flowchart LR
     car["Tesla vehicle<br/>(your Model Y)"]
     fleet["Tesla Fleet API"]
+    telemetry["Tesla fleet-telemetry"]
     backend["backend (Node)<br/>OAuth + tokens<br/>WebSocket hub"]
+    cosmos[("Cosmos DB")]
     app["iPhone app (SwiftUI)<br/>Apple Map + speedometer dial"]
 
     car --> fleet
+    car --> telemetry
     backend -->|poll vehicle_data| fleet
+    telemetry -->|POST decoded records| backend
+    backend -->|persist events| cosmos
     backend -->|ws://…/stream| app
 ```
 
@@ -20,7 +25,7 @@ flowchart LR
 
 | Path | What it is |
 | --- | --- |
-| [`backend/`](backend/) | Node + TypeScript service: Tesla OAuth, token storage, data sources (simulator + real Fleet API), and a WebSocket hub that streams `VehicleState` to the app. |
+| [`backend/`](backend/) | Node + TypeScript service: Tesla OAuth, token storage, data sources (simulator, Fleet API poll, and Fleet Telemetry push), Cosmos DB event persistence, and a WebSocket hub that streams `VehicleState` to the app. |
 | [`ios/`](ios/) | Native SwiftUI iPhone app: Apple MapKit background, Tesla-style speedometer, heading-follow camera, realtime WebSocket client. |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | System overview, realtime data-flow diagram, and component responsibilities. |
 | [`docs/TESLA_FLEET_API_SETUP.md`](docs/TESLA_FLEET_API_SETUP.md) | Step-by-step Tesla Fleet API onboarding (developer app, keys, OAuth, scopes). |

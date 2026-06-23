@@ -1,0 +1,32 @@
+# Azure Cosmos DB Emulator for LOCAL development and testing only.
+#
+# Start it:    docker compose -f docker-compose.cosmos.yml up -d
+# Stop it:     docker compose -f docker-compose.cosmos.yml down
+#
+# Then point the backend at it via .env:
+#   COSMOS_ENDPOINT=https://localhost:8081
+#   COSMOS_KEY=C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw==
+#
+# The COSMOS_KEY above is the emulator's well-known, non-secret fixed key
+# (documented by Microsoft). The app trusts the emulator's self-signed TLS cert
+# only when COSMOS_KEY is set, and creates the database + container on startup.
+#
+# This is the Linux-based emulator image. On first boot it can take a minute or
+# two to become healthy.
+
+services:
+  cosmos:
+    image: mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator:latest
+    container_name: tesladash-cosmos-emulator
+    ports:
+      - "8081:8081" # data plane (https)
+      - "10250-10255:10250-10255" # partition endpoints
+    environment:
+      # Keep partition count low so the emulator starts fast and uses less RAM.
+      AZURE_COSMOS_EMULATOR_PARTITION_COUNT: "3"
+      AZURE_COSMOS_EMULATOR_ENABLE_DATA_PERSISTENCE: "true"
+    volumes:
+      - cosmos-data:/data/db
+
+volumes:
+  cosmos-data:

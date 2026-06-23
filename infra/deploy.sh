@@ -14,8 +14,13 @@ fi
 echo "==> az login check"
 az account show >/dev/null 2>&1 || az login
 
-echo "==> terraform init"
-terraform init -input=false
+if [[ ! -f backend.hcl ]]; then
+  echo "==> Bootstrapping Terraform remote state storage"
+  ./bootstrap-state.sh
+fi
+
+echo "==> terraform init (remote state in Azure Storage)"
+terraform init -input=false -backend-config=backend.hcl
 
 echo "==> terraform apply"
 terraform apply -auto-approve

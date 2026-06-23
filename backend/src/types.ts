@@ -27,7 +27,7 @@ export interface VehicleState {
   /** Battery state of charge, percent. */
   batteryLevel: number | null;
   /** Where this data came from. */
-  source: 'simulator' | 'tesla';
+  source: 'simulator' | 'tesla' | 'tesla_telemetry';
   /** True when the vehicle is awake and reporting. */
   online: boolean;
 }
