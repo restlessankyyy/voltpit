@@ -122,24 +122,83 @@ jobs:
           } > commit-context.md
           echo "Collected $(wc -l < commit-context.md) lines of context"
 
-      # GitHub Models provides free LLM inference inside Actions (models: read).
-      # It reads the commit context and writes a polished release description.
-      - name: Generate release notes with GitHub Models
+      # An LLM writes a polished release description from the commit context.
+      # Provider-agnostic and best-effort: it uses Gemini when GEMINI_API_KEY is
+      # set, otherwise falls back to GitHub Models (built-in token). Any failure
+      # falls back to GitHub's auto-generated notes in the next step.
+      - name: Generate release notes
         id: ai
         continue-on-error: true
-        uses: actions/ai-inference@v1
-        with:
-          model: openai/gpt-5-mini
-          max-tokens: 800
-          system-prompt: |
-            You are a release-notes writer for the Voltpit project (a SwiftUI
-            iPhone Tesla dashboard with a Node/TypeScript backend on Azure).
-            Write concise, user-facing GitHub release notes in Markdown from the
-            provided commit context. Start with a one-paragraph summary, then a
-            "What's changed" bullet list grouped by area (Backend, iOS, Infra,
-            CI) when it helps. Omit empty groups. Do not invent changes. Do not
-            use the em dash character.
-          prompt-file: commit-context.md
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL: gemini-2.5-flash
+          GH_MODELS_TOKEN: ${{ github.token }}
+          GH_MODEL: openai/gpt-4.1-mini
+        run: |
+          set -euo pipefail
+          system='You are a release-notes writer for the Voltpit project (a SwiftUI iPhone Tesla dashboard with a Node/TypeScript backend on Azure). Write concise, user-facing GitHub release notes in Markdown from the provided commit context. Start with a one-paragraph summary, then a "What'"'"'s changed" bullet list grouped by area (Backend, iOS, Infra, CI) when it helps. Omit empty groups. Do not invent changes. Do not use the em dash character.'
+
+          if [ -n "${GEMINI_API_KEY:-}" ]; then
+            echo "Using provider: gemini ($GEMINI_MODEL)"
+            jq -n \
+              --arg sys "$system" \
+              --rawfile ctx commit-context.md \
+              '{
+                system_instruction: { parts: [ { text: $sys } ] },
+                contents: [ { role: "user", parts: [ { text: $ctx } ] } ],
+                generationConfig: { maxOutputTokens: 800, temperature: 0.3 }
+              }' > ai-req.json
+            http="$(curl -sS -o ai-resp.json -w '%{http_code}' \
+              -H 'Content-Type: application/json' \
+              -H "x-goog-api-key: ${GEMINI_API_KEY}" \
+              -X POST \
+              "https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent" \
+              -d @ai-req.json)"
+            echo "Gemini HTTP $http"
+            if [ "$http" != "200" ]; then
+              echo "Gemini request failed:"; cat ai-resp.json || true
+              echo "notes-file=" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            jq -r '[.candidates[0].content.parts[].text] | join("") // empty' ai-resp.json > ai-notes.md
+          else
+            echo "Using provider: github-models ($GH_MODEL)"
+            jq -n \
+              --arg model "$GH_MODEL" \
+              --arg sys "$system" \
+              --rawfile ctx commit-context.md \
+              '{
+                model: $model,
+                temperature: 0.3,
+                max_tokens: 800,
+                messages: [
+                  { role: "system", content: $sys },
+                  { role: "user", content: $ctx }
+                ]
+              }' > ai-req.json
+            http="$(curl -sS -o ai-resp.json -w '%{http_code}' \
+              -H 'Content-Type: application/json' \
+              -H "Authorization: Bearer ${GH_MODELS_TOKEN}" \
+              -X POST \
+              "https://models.github.ai/inference/chat/completions" \
+              -d @ai-req.json)"
+            echo "GitHub Models HTTP $http"
+            if [ "$http" != "200" ]; then
+              echo "GitHub Models request failed:"; cat ai-resp.json || true
+              echo "notes-file=" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            jq -r '.choices[0].message.content // empty' ai-resp.json > ai-notes.md
+          fi
+
+          if [ ! -s ai-notes.md ]; then
+            echo "Empty notes from model"
+            echo "notes-file=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "Generated $(wc -l < ai-notes.md) lines of notes"
+          echo "notes-file=ai-notes.md" >> "$GITHUB_OUTPUT"
+
 
       - name: Create GitHub release
         env:
@@ -148,7 +207,7 @@ jobs:
           PREVIOUS: ${{ steps.version.outputs.previous }}
           PRERELEASE: ${{ inputs.prerelease }}
           AI_OUTCOME: ${{ steps.ai.outcome }}
-          AI_NOTES_FILE: ${{ steps.ai.outputs.response-file }}
+          AI_NOTES_FILE: ${{ steps.ai.outputs.notes-file }}
         run: |
           set -euo pipefail
           args=(--title "$TAG" --target "$GITHUB_SHA")
