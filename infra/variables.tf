@@ -50,7 +50,7 @@ variable "primary_unit" {
 
 variable "image_tag" {
   type        = string
-  description = "Container image tag to build and deploy."
+  description = "Container image tag to build and deploy. Leave as 'latest' (the default sentinel) to auto-derive an immutable content hash from the backend build inputs; set an explicit value (e.g. a git SHA) to pin a specific tag."
   default     = "latest"
 }
 
