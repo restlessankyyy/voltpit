@@ -27,7 +27,7 @@ jobs:
       packages: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       # The Dockerfile serves keys/public-key.pem at the Tesla well-known path.
       # Real keys are gitignored, so generate a throwaway public key just so the
