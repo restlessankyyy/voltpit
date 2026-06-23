@@ -123,9 +123,9 @@ jobs:
           echo "Collected $(wc -l < commit-context.md) lines of context"
 
       # An LLM writes a polished release description from the commit context.
-      # Provider-agnostic and best-effort: it uses Gemini when GEMINI_API_KEY is
-      # set, otherwise falls back to GitHub Models (built-in token). Any failure
-      # falls back to GitHub's auto-generated notes in the next step.
+      # Best-effort with layered fallback: try Gemini first (when GEMINI_API_KEY
+      # is set), fall back to GitHub Models (built-in token) on any failure, and
+      # if both fail fall back to GitHub's auto-generated notes in the next step.
       - name: Generate release notes
         id: ai
         continue-on-error: true
@@ -135,11 +135,13 @@ jobs:
           GH_MODELS_TOKEN: ${{ github.token }}
           GH_MODEL: openai/gpt-4.1-mini
         run: |
-          set -euo pipefail
+          set -uo pipefail
           system='You are a release-notes writer for the Voltpit project (a SwiftUI iPhone Tesla dashboard with a Node/TypeScript backend on Azure). Write concise, user-facing GitHub release notes in Markdown from the provided commit context. Start with a one-paragraph summary, then a "What'"'"'s changed" bullet list grouped by area (Backend, iOS, Infra, CI) when it helps. Omit empty groups. Do not invent changes. Do not use the em dash character.'
 
-          if [ -n "${GEMINI_API_KEY:-}" ]; then
-            echo "Using provider: gemini ($GEMINI_MODEL)"
+          # Try Gemini. Writes ai-notes.md and returns 0 on success.
+          try_gemini() {
+            [ -n "${GEMINI_API_KEY:-}" ] || { echo "Gemini skipped: no GEMINI_API_KEY"; return 1; }
+            echo "Trying provider: gemini ($GEMINI_MODEL)"
             jq -n \
               --arg sys "$system" \
               --rawfile ctx commit-context.md \
@@ -153,16 +155,20 @@ jobs:
               -H "x-goog-api-key: ${GEMINI_API_KEY}" \
               -X POST \
               "https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent" \
-              -d @ai-req.json)"
+              -d @ai-req.json)" || { echo "Gemini curl failed"; return 1; }
             echo "Gemini HTTP $http"
             if [ "$http" != "200" ]; then
               echo "Gemini request failed:"; cat ai-resp.json || true
-              echo "notes-file=" >> "$GITHUB_OUTPUT"
-              exit 0
+              return 1
             fi
             jq -r '[.candidates[0].content.parts[].text] | join("") // empty' ai-resp.json > ai-notes.md
-          else
-            echo "Using provider: github-models ($GH_MODEL)"
+            [ -s ai-notes.md ] || { echo "Gemini returned empty notes"; return 1; }
+            return 0
+          }
+
+          # Try GitHub Models. Writes ai-notes.md and returns 0 on success.
+          try_github_models() {
+            echo "Trying provider: github-models ($GH_MODEL)"
             jq -n \
               --arg model "$GH_MODEL" \
               --arg sys "$system" \
@@ -181,23 +187,24 @@ jobs:
               -H "Authorization: Bearer ${GH_MODELS_TOKEN}" \
               -X POST \
               "https://models.github.ai/inference/chat/completions" \
-              -d @ai-req.json)"
+              -d @ai-req.json)" || { echo "GitHub Models curl failed"; return 1; }
             echo "GitHub Models HTTP $http"
             if [ "$http" != "200" ]; then
               echo "GitHub Models request failed:"; cat ai-resp.json || true
-              echo "notes-file=" >> "$GITHUB_OUTPUT"
-              exit 0
+              return 1
             fi
             jq -r '.choices[0].message.content // empty' ai-resp.json > ai-notes.md
-          fi
+            [ -s ai-notes.md ] || { echo "GitHub Models returned empty notes"; return 1; }
+            return 0
+          }
 
-          if [ ! -s ai-notes.md ]; then
-            echo "Empty notes from model"
+          if try_gemini || try_github_models; then
+            echo "Generated $(wc -l < ai-notes.md) lines of notes"
+            echo "notes-file=ai-notes.md" >> "$GITHUB_OUTPUT"
+          else
+            echo "All providers failed; will fall back to auto-generated notes"
             echo "notes-file=" >> "$GITHUB_OUTPUT"
-            exit 0
           fi
-          echo "Generated $(wc -l < ai-notes.md) lines of notes"
-          echo "notes-file=ai-notes.md" >> "$GITHUB_OUTPUT"
 
 
       - name: Create GitHub release
