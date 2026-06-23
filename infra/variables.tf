@@ -81,3 +81,34 @@ variable "tesla_fleet_base_url" {
   description = "Tesla Fleet API regional base URL. EU (Sweden) by default; use the NA URL for North America."
   default     = "https://fleet-api.prd.eu.vn.cloud.tesla.com"
 }
+
+# --- Optional Cosmos DB event store (free tier, zero redundancy) ---
+
+variable "enable_cosmos" {
+  type        = bool
+  description = "Provision a free-tier Cosmos DB account to persist streamed telemetry events with a 30-day TTL. Only one free-tier account is allowed per subscription."
+  default     = false
+}
+
+variable "cosmos_database" {
+  type        = string
+  description = "Cosmos SQL database name for telemetry events."
+  default     = "tesladash"
+}
+
+variable "cosmos_container" {
+  type        = string
+  description = "Cosmos SQL container name for telemetry events. Partitioned by vehicle VIN."
+  default     = "events"
+}
+
+variable "cosmos_ttl_seconds" {
+  type        = number
+  description = "Default per-document time-to-live, in seconds. Events auto-expire after this. 30 days by default."
+  default     = 2592000
+
+  validation {
+    condition     = var.cosmos_ttl_seconds > 0 && var.cosmos_ttl_seconds <= 2592000
+    error_message = "cosmos_ttl_seconds must be between 1 and 2592000 (30 days maximum)."
+  }
+}

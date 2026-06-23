@@ -25,7 +25,7 @@ Tesla vehicle ─▶ Tesla Fleet API ◀─ backend (Node) ──ws──▶ iPh
 
 | Path | What it is |
 | --- | --- |
-| `backend/` | Node + TypeScript: Tesla OAuth, token storage, data sources (simulator + Fleet API), WebSocket hub broadcasting `VehicleState`. |
+| `backend/` | Node + TypeScript: Tesla OAuth, token storage, data sources (simulator, Fleet API poll, Fleet Telemetry push), Cosmos DB event persistence, WebSocket hub broadcasting `VehicleState`. |
 | `ios/` | SwiftUI app: Apple MapKit background (no API key), Tesla-style speedometer, heading-follow camera, WebSocket client. |
 | `infra/` | Terraform for Azure Container Apps deployment. |
 | `docs/TESLA_FLEET_API_SETUP.md` | Tesla Fleet API onboarding (developer app, keys, OAuth, scopes). |
@@ -34,9 +34,14 @@ Tesla vehicle ─▶ Tesla Fleet API ◀─ backend (Node) ──ws──▶ iPh
 
 - **Data-source abstraction.** A `VehicleSource` (in `backend/src/sources/`)
   produces `VehicleState` messages. `SimulatorSource` emits fake-but-realistic
-  drives (no Tesla account); `TeslaSource` polls the Fleet API. Selected via the
-  `SOURCE` env var (`simulator` | `tesla`). To add a realtime telemetry path,
-  add a new source feeding the same `WsHub.broadcast()` — the app needs no change.
+  drives (no Tesla account); `TeslaSource` polls the Fleet API;
+  `TeslaTelemetrySource` receives pushed fleet-telemetry records on an ingest
+  endpoint. Selected via the `SOURCE` env var
+  (`simulator` | `tesla` | `tesla_telemetry`). All sources feed the same
+  `WsHub.broadcast()`, so the app needs no change.
+- **Persistence.** `CosmosEventStore` (in `backend/src/storage/`) best-effort
+  writes streamed events to Cosmos DB with a 30-day TTL via managed identity.
+  Auto-disabled when `COSMOS_ENDPOINT` is unset; failures never break the stream.
 - **Message shape.** Both sources emit the same `VehicleState` / `ServerMessage`
   types from `backend/src/types.ts`. Keep the iOS `VehicleState.swift` model in
   sync when changing the payload.

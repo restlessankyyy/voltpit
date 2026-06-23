@@ -26,7 +26,18 @@ locals {
     var.tesla_vin != "" ? [{ name = "TESLA_VIN", value = var.tesla_vin }] : [],
   ) : []
 
-  env_plain = concat(local.base_env, local.tesla_env)
+  # Cosmos persistence env. No key is passed: the account disables local auth,
+  # so the app authenticates with its user-assigned managed identity. The
+  # AZURE_CLIENT_ID lets DefaultAzureCredential pick that identity.
+  cosmos_env = var.enable_cosmos ? [
+    { name = "COSMOS_ENDPOINT", value = azurerm_cosmosdb_account.events[0].endpoint },
+    { name = "COSMOS_DATABASE", value = var.cosmos_database },
+    { name = "COSMOS_CONTAINER", value = var.cosmos_container },
+    { name = "COSMOS_TTL_SECONDS", value = tostring(var.cosmos_ttl_seconds) },
+    { name = "AZURE_CLIENT_ID", value = azurerm_user_assigned_identity.app.client_id },
+  ] : []
+
+  env_plain = concat(local.base_env, local.tesla_env, local.cosmos_env)
 
   # Secret-backed environment variables. STREAM_TOKEN always guards the
   # WebSocket; the Tesla client secret is only present in tesla mode.
@@ -90,6 +101,108 @@ resource "azurerm_role_assignment" "acr_pull" {
   scope                = azurerm_container_registry.acr.id
   role_definition_name = "AcrPull"
   principal_id         = azurerm_user_assigned_identity.app.principal_id
+}
+
+# ── Cosmos DB: free-tier event store, zero redundancy ────────────────────────
+# Persists streamed telemetry events with a 30-day TTL. Free tier waives the
+# cost of the first 1000 RU/s and 25 GB (one free-tier account per subscription;
+# free tier and serverless are mutually exclusive, so this uses provisioned
+# throughput). Zero redundancy: single region, no zone redundancy, no
+# geo-replication, manual failover only, local (LRS) backup.
+resource "azurerm_cosmosdb_account" "events" {
+  count               = var.enable_cosmos ? 1 : 0
+  name                = "${var.name_prefix}-cosmos-${local.suffix}"
+  location            = azurerm_resource_group.rg.location
+  resource_group_name = azurerm_resource_group.rg.name
+  offer_type          = "Standard"
+  kind                = "GlobalDocumentDB"
+
+  # Free tier: first 1000 RU/s + 25 GB free. Throughput provisioned on the
+  # database below stays within that allowance.
+  free_tier_enabled = true
+
+  consistency_policy {
+    consistency_level = "Session"
+  }
+
+  # Zero redundancy: one region, no zone redundancy, no automatic failover.
+  geo_location {
+    location          = azurerm_resource_group.rg.location
+    failover_priority = 0
+    zone_redundant    = false
+  }
+
+  automatic_failover_enabled = false
+
+  # Local (LRS) backup only, no geo-redundant copies.
+  backup {
+    type               = "Periodic"
+    storage_redundancy = "Local"
+  }
+
+  # Least privilege: disable key-based (local) auth so the only way in is Entra
+  # ID + data-plane RBAC bound to the app's managed identity.
+  local_authentication_disabled = true
+}
+
+resource "azurerm_cosmosdb_sql_database" "events" {
+  count               = var.enable_cosmos ? 1 : 0
+  name                = var.cosmos_database
+  resource_group_name = azurerm_resource_group.rg.name
+  account_name        = azurerm_cosmosdb_account.events[0].name
+
+  # Database-level autoscale shared across containers. Max 1000 RU/s keeps the
+  # account fully inside the free-tier allowance; it scales down to 100 RU/s
+  # when idle.
+  autoscale_settings {
+    max_throughput = 1000
+  }
+}
+
+resource "azurerm_cosmosdb_sql_container" "events" {
+  count                 = var.enable_cosmos ? 1 : 0
+  name                  = var.cosmos_container
+  resource_group_name   = azurerm_resource_group.rg.name
+  account_name          = azurerm_cosmosdb_account.events[0].name
+  database_name         = azurerm_cosmosdb_sql_database.events[0].name
+  partition_key_paths   = ["/vin"]
+  partition_key_version = 2
+
+  # Events auto-expire after the TTL (30 days by default). Documents may also
+  # carry their own `ttl` to override per item.
+  default_ttl = var.cosmos_ttl_seconds
+}
+
+# Custom data-plane role granting ONLY what the backend needs: read account
+# metadata (required by the SDK to connect) and create items. No read, no
+# delete, no container/database management. This is tighter than the built-in
+# "Cosmos DB Built-in Data Contributor" role, which also allows reads, deletes
+# and container management we never use.
+resource "azurerm_cosmosdb_sql_role_definition" "events_writer" {
+  count               = var.enable_cosmos ? 1 : 0
+  name                = "${var.name_prefix}-telemetry-writer"
+  resource_group_name = azurerm_resource_group.rg.name
+  account_name        = azurerm_cosmosdb_account.events[0].name
+  type                = "CustomRole"
+  assignable_scopes   = [azurerm_cosmosdb_account.events[0].id]
+
+  permissions {
+    data_actions = [
+      "Microsoft.DocumentDB/databaseAccounts/readMetadata",
+      "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/items/create",
+    ]
+  }
+}
+
+# Bind the custom write-only role to the app's managed identity, scoped to the
+# single events container (not the whole account) for least privilege.
+resource "azurerm_cosmosdb_sql_role_assignment" "events_writer" {
+  count               = var.enable_cosmos ? 1 : 0
+  resource_group_name = azurerm_resource_group.rg.name
+  account_name        = azurerm_cosmosdb_account.events[0].name
+  role_definition_id  = azurerm_cosmosdb_sql_role_definition.events_writer[0].id
+  principal_id        = azurerm_user_assigned_identity.app.principal_id
+  scope               = azurerm_cosmosdb_sql_container.events[0].id
 }
 
 # Build and push the backend image locally with Docker buildx (fast path).
@@ -194,6 +307,7 @@ resource "azurerm_container_app" "app" {
 
   depends_on = [
     azurerm_role_assignment.acr_pull,
+    azurerm_cosmosdb_sql_role_assignment.events_writer,
     terraform_data.image_build,
   ]
 }
