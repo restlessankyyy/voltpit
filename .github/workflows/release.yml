@@ -10,10 +10,11 @@ on:
   workflow_dispatch:
     inputs:
       bump:
-        description: "Semver part to increment"
+        description: "Version bump (auto reads conventional commits)"
         type: choice
-        default: patch
+        default: auto
         options:
+          - auto
           - patch
           - minor
           - major
@@ -49,7 +50,30 @@ jobs:
           version="${latest#v}"
           IFS='.' read -r major minor patch <<< "$version"
           major="${major:-0}"; minor="${minor:-0}"; patch="${patch:-0}"
-          case "${{ inputs.bump }}" in
+
+          # Resolve the requested bump. "auto" inspects conventional commits
+          # since the previous tag: feat! / BREAKING CHANGE -> major,
+          # feat -> minor, everything else -> patch.
+          bump="${{ inputs.bump }}"
+          if [ "$bump" = "auto" ]; then
+            if [ "$latest" = "v0.0.0" ] || ! git rev-parse "$latest" >/dev/null 2>&1; then
+              range=""
+            else
+              range="${latest}..HEAD"
+            fi
+            log="$(git log --no-merges --pretty='%B' $range)"
+            if printf '%s' "$log" | grep -qE '(^|\n)[[:space:]]*BREAKING CHANGE' \
+               || printf '%s' "$log" | grep -qE '^[a-z]+(\([^)]*\))?!:'; then
+              bump="major"
+            elif printf '%s' "$log" | grep -qE '^feat(\([^)]*\))?:'; then
+              bump="minor"
+            else
+              bump="patch"
+            fi
+            echo "Auto-detected bump: $bump"
+          fi
+
+          case "$bump" in
             major) major=$((major + 1)); minor=0; patch=0 ;;
             minor) minor=$((minor + 1)); patch=0 ;;
             patch) patch=$((patch + 1)) ;;
@@ -105,7 +129,7 @@ jobs:
         continue-on-error: true
         uses: actions/ai-inference@v1
         with:
-          model: openai/gpt-4.1
+          model: openai/gpt-5-mini
           max-tokens: 800
           system-prompt: |
             You are a release-notes writer for the Voltpit project (a SwiftUI
