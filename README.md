@@ -4,6 +4,8 @@ A Tesla Model Y style driving dashboard for iPhone: a big speedometer over a liv
 Apple Map that follows your heading, fed by **your** car's data through the
 **Tesla Fleet API** with realtime updates over WebSocket.
 
+![Voltpit dashboard: speedometer, gear selector and estimated range over a live map of Kungsholmen, Stockholm, with battery and power cards](docs/images/dashboard.png)
+
 ```mermaid
 flowchart LR
     car["Tesla vehicle<br/>(your Model Y)"]

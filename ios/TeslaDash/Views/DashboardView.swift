@@ -209,17 +209,21 @@ struct DashboardView: View {
         }
     }
 
-    /// Range-style readout at the foot of the pod (battery %, the only
-    /// energy figure the Fleet API gives us).
+    /// Estimated-range readout at the foot of the pod. Battery % already lives
+    /// in the right-hand card, so here we surface the derived driving range
+    /// instead of repeating the same number.
     private var rangeReadout: some View {
         HStack(spacing: 8) {
-            Image(systemName: "car.fill")
+            Image(systemName: "road.lanes")
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(Color(red: 0.45, green: 0.85, blue: 1.0))
-            Text(batteryText)
+            Text(rangeText)
                 .font(.system(size: 20, weight: .semibold, design: .rounded))
                 .monospacedDigit()
                 .foregroundStyle(.white)
+            Text("est. range")
+                .font(.system(size: 12, weight: .medium, design: .rounded))
+                .foregroundStyle(.white.opacity(0.45))
         }
     }
 
@@ -286,6 +290,18 @@ struct DashboardView: View {
 
     private var batteryTint: Color {
         (stream.state?.batteryLevel ?? 100) <= 15 ? .red : Color(red: 0.45, green: 0.85, blue: 1.0)
+    }
+
+    /// Estimated driving range derived from battery level. The Fleet API only
+    /// gives us a charge percentage, so we scale it against a nominal full
+    /// range (Model Y Long Range: ~330 mi / 530 km) and render it in the
+    /// configured unit.
+    private var rangeText: String {
+        guard let level = stream.state?.batteryLevel else { return "—" }
+        let metric = stream.state?.usesMetric ?? false
+        let fullRange = metric ? 530.0 : 330.0
+        let estimate = Int((Double(level) / 100.0 * fullRange).rounded())
+        return "\(estimate) \(metric ? "km" : "mi")"
     }
 
     private var powerTitle: String { (stream.state?.power ?? 0) < 0 ? "Regen" : "Power" }

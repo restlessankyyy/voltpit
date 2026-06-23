@@ -9,7 +9,7 @@ struct MapView: UIViewRepresentable {
     var heading: Double?
     var moving: Bool
 
-    private static let defaultCenter = CLLocationCoordinate2D(latitude: 37.7766, longitude: -122.4172)
+    private static let defaultCenter = CLLocationCoordinate2D(latitude: 59.332886, longitude: 18.029528)
     // Tight, steep camera so buildings rise up for a street-level 3D feel.
     private static let cameraDistance: CLLocationDistance = 320
     private static let pitch: CGFloat = 60
@@ -55,11 +55,6 @@ struct MapView: UIViewRepresentable {
     func updateUIView(_ map: MKMapView, context: Context) {
         guard let coordinate else { return }
 
-        // Move the puck to the new position.
-        if let marker = context.coordinator.marker {
-            marker.coordinate = coordinate
-        }
-
         let bearing = moving ? (heading ?? map.camera.heading) : map.camera.heading
 
         // Follow the car but keep whatever zoom (camera distance) the driver
@@ -70,11 +65,37 @@ struct MapView: UIViewRepresentable {
             pitch: map.camera.pitch,
             heading: bearing
         )
-        map.setCamera(camera, animated: true)
+
+        // The backend streams one discrete position per update, but the
+        // cadence varies by data source: the simulator pushes every ~250 ms,
+        // the Tesla Fleet API poll lands every ~2.5 s, and Fleet Telemetry is
+        // sub-second. A fixed glide tuned to one source would hop-and-freeze on
+        // the others, so the animation duration tracks the measured gap since
+        // the previous update and spreads the move evenly across it. That turns
+        // every source into a continuous glide instead of a jump. Clamped so a
+        // first fix or a long offline gap cannot produce an absurd crawl.
+        let now = Date()
+        let gap = context.coordinator.lastUpdate.map { now.timeIntervalSince($0) } ?? 0.3
+        context.coordinator.lastUpdate = now
+        let duration = min(max(gap, 0.15), 2.5)
+
+        // .beginFromCurrentState lets each new update smoothly redirect the
+        // in-flight motion rather than stopping and restarting it.
+        UIView.animate(
+            withDuration: duration,
+            delay: 0,
+            options: [.curveLinear, .allowUserInteraction, .beginFromCurrentState]
+        ) {
+            context.coordinator.marker?.coordinate = coordinate
+            map.setCamera(camera, animated: false)
+        }
     }
 
     final class Coordinator: NSObject, MKMapViewDelegate {
         var marker: CarAnnotation?
+        // Timestamp of the previous position update, used to size each glide to
+        // the real interval between updates regardless of data source.
+        var lastUpdate: Date?
 
         func mapView(_ mapView: MKMapView, viewFor annotation: MKAnnotation) -> MKAnnotationView? {
             guard annotation is CarAnnotation else { return nil }
