@@ -27,3 +27,26 @@ targets:
         SDKROOT: iphoneos
         SUPPORTED_PLATFORMS: "iphoneos iphonesimulator"
         SUPPORTS_MACCATALYST: "NO"
+
+  TeslaDashTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: TeslaDashTests
+    dependencies:
+      - target: TeslaDash
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.ankitraj.tesladash.tests
+        GENERATE_INFOPLIST_FILE: "YES"
+        SWIFT_VERSION: "5.9"
+        TARGETED_DEVICE_FAMILY: "1"
+
+schemes:
+  TeslaDash:
+    build:
+      targets:
+        TeslaDash: all
+    test:
+      targets:
+        - TeslaDashTests
