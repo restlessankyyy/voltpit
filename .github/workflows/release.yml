@@ -116,7 +116,6 @@ jobs:
             CI) when it helps. Omit empty groups. Do not invent changes. Do not
             use the em dash character.
           prompt-file: commit-context.md
-          output-file: release-notes.md
 
       - name: Create GitHub release
         env:
@@ -125,12 +124,13 @@ jobs:
           PREVIOUS: ${{ steps.version.outputs.previous }}
           PRERELEASE: ${{ inputs.prerelease }}
           AI_OUTCOME: ${{ steps.ai.outcome }}
+          AI_NOTES_FILE: ${{ steps.ai.outputs.response-file }}
         run: |
           set -euo pipefail
           args=(--title "$TAG" --target "$GITHUB_SHA")
-          if [ "$AI_OUTCOME" = "success" ] && [ -s release-notes.md ]; then
+          if [ "$AI_OUTCOME" = "success" ] && [ -n "$AI_NOTES_FILE" ] && [ -s "$AI_NOTES_FILE" ]; then
             echo "Using AI-generated release notes"
-            args+=(--notes-file release-notes.md)
+            args+=(--notes-file "$AI_NOTES_FILE")
           else
             echo "Falling back to auto-generated notes"
             args+=(--generate-notes)
