@@ -1,0 +1,142 @@
+name: Infra (Terraform)
+
+# Runs Terraform for infra/ with remote state in an Azure Storage Account blob
+# container (configured in infra/backend.tf). Pull requests get a read-only
+# `plan`; pushes to main (and manual dispatch) run `apply`.
+#
+# Authentication uses GitHub OIDC federated credentials, so NO Azure secrets
+# (client secrets / storage keys) are stored in the repo. The state blob is
+# accessed with Azure AD (use_azuread_auth = true in backend.tf), and the
+# provider authenticates with OIDC as well (ARM_USE_OIDC=true below).
+#
+# One-time setup required in Azure + GitHub:
+#   1. Run infra/bootstrap-state.sh once to create the state Storage Account.
+#   2. Create an Entra ID app / user-assigned identity with a federated
+#      credential trusting this repo, and grant it:
+#        - "Contributor" on the target subscription (to manage resources), and
+#        - "Storage Blob Data Contributor" on the state Storage Account
+#          (to read/write the Terraform state blob).
+#   3. Add these GitHub repository SECRETS:
+#        AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID
+#   4. Add these GitHub repository VARIABLES (names of the bootstrap output):
+#        TFSTATE_STORAGE_ACCOUNT   (required, globally unique account name)
+#      Optional VARIABLES (sensible defaults applied if unset):
+#        TFSTATE_RESOURCE_GROUP    (default: tesladash-tfstate-rg)
+#        TFSTATE_CONTAINER         (default: tfstate)
+#        TFSTATE_KEY               (default: tesladash.tfstate)
+#        SOURCE_MODE               (default: simulator)
+#        PRIMARY_UNIT              (default: kmh)
+#        ENABLE_COSMOS             (default: false)
+#        IMAGE_TAG                 (default: latest)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "infra/**"
+      - ".github/workflows/infra.yml"
+  pull_request:
+    paths:
+      - "infra/**"
+      - ".github/workflows/infra.yml"
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "Apply the plan (otherwise plan only)"
+        type: boolean
+        default: false
+
+# Never run two state-mutating Terraform jobs at once.
+concurrency:
+  group: terraform-infra
+  cancel-in-progress: false
+
+defaults:
+  run:
+    working-directory: infra
+
+env:
+  # Provider + backend authenticate via GitHub OIDC (no client secret needed).
+  ARM_USE_OIDC: "true"
+  ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+  ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+  ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+  # Terraform input variables.
+  TF_VAR_subscription_id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+  TF_VAR_source_mode: ${{ vars.SOURCE_MODE || 'simulator' }}
+  TF_VAR_primary_unit: ${{ vars.PRIMARY_UNIT || 'kmh' }}
+  TF_VAR_enable_cosmos: ${{ vars.ENABLE_COSMOS || 'false' }}
+  TF_VAR_image_tag: ${{ vars.IMAGE_TAG || 'latest' }}
+  # Tesla creds are only used when SOURCE_MODE=tesla; empty otherwise.
+  TF_VAR_tesla_client_id: ${{ secrets.TESLA_CLIENT_ID }}
+  TF_VAR_tesla_client_secret: ${{ secrets.TESLA_CLIENT_SECRET }}
+  TF_VAR_tesla_vin: ${{ vars.TESLA_VIN }}
+
+jobs:
+  terraform:
+    name: Terraform
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write # required for OIDC federated login
+      contents: read
+      pull-requests: write # to comment the plan on PRs
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.8"
+
+      - name: Terraform fmt
+        run: terraform fmt -check -recursive
+
+      - name: Terraform init (remote state in Azure Storage)
+        run: |
+          terraform init -input=false \
+            -backend-config="resource_group_name=${{ vars.TFSTATE_RESOURCE_GROUP || 'tesladash-tfstate-rg' }}" \
+            -backend-config="storage_account_name=${{ vars.TFSTATE_STORAGE_ACCOUNT }}" \
+            -backend-config="container_name=${{ vars.TFSTATE_CONTAINER || 'tfstate' }}" \
+            -backend-config="key=${{ vars.TFSTATE_KEY || 'tesladash.tfstate' }}"
+
+      - name: Terraform validate
+        run: terraform validate -no-color
+
+      - name: Terraform plan
+        id: plan
+        run: terraform plan -input=false -no-color -out=tfplan
+
+      - name: Comment plan on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { execSync } = require('node:child_process');
+            const plan = execSync('terraform show -no-color tfplan', { cwd: 'infra' }).toString();
+            const body = [
+              '#### Terraform Plan 📖',
+              '```terraform',
+              plan.length > 60000 ? plan.slice(0, 60000) + '\n... (truncated)' : plan,
+              '```',
+            ].join('\n');
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body,
+            });
+
+      # Apply only on push to main or a manual dispatch with apply=true.
+      - name: Terraform apply
+        if: >-
+          github.event_name == 'push' ||
+          (github.event_name == 'workflow_dispatch' && inputs.apply)
+        run: terraform apply -input=false -no-color tfplan
