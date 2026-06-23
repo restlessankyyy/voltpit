@@ -1,8 +1,23 @@
 locals {
   # Globally-unique-ish suffix for the ACR name (alphanumeric only).
-  suffix    = random_string.suffix.result
-  acr_name  = "${var.name_prefix}acr${local.suffix}"
-  image_ref = "${azurerm_container_registry.acr.login_server}/tesla-dash-backend:${var.image_tag}"
+  suffix   = random_string.suffix.result
+  acr_name = "${var.name_prefix}acr${local.suffix}"
+
+  # Content-addressed image tag: a short hash over the Dockerfile, package.json,
+  # and every backend source file. It changes whenever the build inputs change,
+  # so each build gets a unique immutable tag and the Container App rolls a new
+  # revision deterministically (no mutable :latest ambiguity).
+  backend_src_hash = substr(sha256(join(",", concat(
+    [filesha256("${path.module}/../backend/Dockerfile")],
+    [filesha256("${path.module}/../backend/package.json")],
+    [for f in fileset("${path.module}/../backend/src", "**") : filesha256("${path.module}/../backend/src/${f}")],
+  ))), 0, 12)
+
+  # Use the explicit image_tag when the caller overrides the "latest" sentinel;
+  # otherwise fall back to the content hash for immutable, deterministic deploys.
+  image_tag = var.image_tag == "latest" ? local.backend_src_hash : var.image_tag
+
+  image_ref = "${azurerm_container_registry.acr.login_server}/tesla-dash-backend:${local.image_tag}"
 
   # Public FQDN of the Container App, derived from the environment's default
   # domain so it can be referenced in the app's own env without a cycle.
@@ -161,6 +176,12 @@ resource "azurerm_cosmosdb_account" "events" {
   # Least privilege: disable key-based (local) auth so the only way in is Entra
   # ID + data-plane RBAC bound to the app's managed identity.
   local_authentication_disabled = true
+
+  # Preserve Azure Policy governance tags (costCode/environment/supportedBy)
+  # applied out-of-band; Terraform does not manage them.
+  lifecycle {
+    ignore_changes = [tags]
+  }
 }
 
 resource "azurerm_cosmosdb_sql_database" "events" {
@@ -231,11 +252,11 @@ resource "azurerm_cosmosdb_sql_role_assignment" "events_writer" {
 # Build and push the backend image locally with Docker buildx (fast path).
 # Container Apps runs linux/amd64, so build for that platform explicitly.
 resource "terraform_data" "image_build" {
+  # The tag already encodes the Dockerfile, package.json, and src hashes, so a
+  # single trigger on the resolved tag rebuilds and pushes exactly when inputs
+  # change.
   triggers_replace = {
-    image_tag      = var.image_tag
-    dockerfile     = filesha256("${path.module}/../backend/Dockerfile")
-    package_json   = filesha256("${path.module}/../backend/package.json")
-    src_dir_change = sha256(join(",", [for f in fileset("${path.module}/../backend/src", "**") : filesha256("${path.module}/../backend/src/${f}")]))
+    image_tag = local.image_tag
   }
 
   provisioner "local-exec" {
