@@ -53,7 +53,7 @@ export const config: Config = {
   source,
   port: Number(process.env.PORT ?? 8080),
   pollIntervalMs: Number(process.env.POLL_INTERVAL_MS ?? 2500),
-  primaryUnit: (process.env.PRIMARY_UNIT as Unit) ?? 'mph',
+  primaryUnit: (process.env.PRIMARY_UNIT as Unit) ?? 'kph',
   // Shared bearer token guarding the /stream WebSocket. When empty (local
   // dev), the stream is open; in the cloud it is always set.
   streamToken: process.env.STREAM_TOKEN?.trim() ?? '',
