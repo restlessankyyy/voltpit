@@ -13,6 +13,8 @@
  *   TELEMETRY_INGEST_TOKEN  bearer token if the endpoint is guarded
  *   VIN           vehicle VIN to report                    (5YJ3SAMPLE0000001)
  */
+export {};
+
 const port = process.env.PORT ?? '8080';
 const path = process.env.INGEST_PATH ?? '/telemetry/ingest';
 const url = process.env.INGEST_URL ?? `http://localhost:${port}${path}`;
