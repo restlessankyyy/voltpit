@@ -1,0 +1,144 @@
+name: Release
+
+# Cut a versioned GitHub Release. Run manually from the Actions tab and pick a
+# bump level; the workflow computes the next semver from the latest v* tag,
+# creates and pushes the tag, then publishes a release with generated notes.
+# Pushing the v* tag also triggers the Backend Image workflow to publish a
+# matching container image.
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "Semver part to increment"
+        type: choice
+        default: patch
+        options:
+          - patch
+          - minor
+          - major
+      prerelease:
+        description: "Mark the release as a prerelease"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  models: read
+
+jobs:
+  release:
+    name: Tag and release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Compute next version
+        id: version
+        run: |
+          set -euo pipefail
+          latest="$(git tag --list 'v*' --sort=-v:refname | head -n1)"
+          if [ -z "$latest" ]; then
+            latest="v0.0.0"
+          fi
+          echo "Latest tag: $latest"
+          version="${latest#v}"
+          IFS='.' read -r major minor patch <<< "$version"
+          major="${major:-0}"; minor="${minor:-0}"; patch="${patch:-0}"
+          case "${{ inputs.bump }}" in
+            major) major=$((major + 1)); minor=0; patch=0 ;;
+            minor) minor=$((minor + 1)); patch=0 ;;
+            patch) patch=$((patch + 1)) ;;
+          esac
+          next="v${major}.${minor}.${patch}"
+          echo "Next tag: $next"
+          if git rev-parse "$next" >/dev/null 2>&1; then
+            echo "Tag $next already exists" >&2
+            exit 1
+          fi
+          echo "tag=$next" >> "$GITHUB_OUTPUT"
+          echo "previous=$latest" >> "$GITHUB_OUTPUT"
+
+      - name: Create and push tag
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" -m "Release $TAG"
+          git push origin "$TAG"
+
+      # Collect the commit log and changed-file summary since the previous tag.
+      # This is the context the model uses to write the release description.
+      - name: Collect commit context
+        id: context
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+          PREVIOUS: ${{ steps.version.outputs.previous }}
+        run: |
+          set -euo pipefail
+          if [ "$PREVIOUS" = "v0.0.0" ] || ! git rev-parse "$PREVIOUS" >/dev/null 2>&1; then
+            range=""
+          else
+            range="${PREVIOUS}..HEAD"
+          fi
+          {
+            echo "Release $TAG (previous: $PREVIOUS)"
+            echo
+            echo "## Commits"
+            git log --no-merges --pretty='- %s (%h)' $range
+            echo
+            echo "## Changed files"
+            git diff --stat ${range:-HEAD~1} HEAD 2>/dev/null || git show --stat --oneline HEAD
+          } > commit-context.md
+          echo "Collected $(wc -l < commit-context.md) lines of context"
+
+      # GitHub Models provides free LLM inference inside Actions (models: read).
+      # It reads the commit context and writes a polished release description.
+      - name: Generate release notes with GitHub Models
+        id: ai
+        continue-on-error: true
+        uses: actions/ai-inference@v1
+        with:
+          model: openai/gpt-4.1
+          max-tokens: 800
+          system-prompt: |
+            You are a release-notes writer for the Voltpit project (a SwiftUI
+            iPhone Tesla dashboard with a Node/TypeScript backend on Azure).
+            Write concise, user-facing GitHub release notes in Markdown from the
+            provided commit context. Start with a one-paragraph summary, then a
+            "What's changed" bullet list grouped by area (Backend, iOS, Infra,
+            CI) when it helps. Omit empty groups. Do not invent changes. Do not
+            use the em dash character.
+          prompt-file: commit-context.md
+          output-file: release-notes.md
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+          PREVIOUS: ${{ steps.version.outputs.previous }}
+          PRERELEASE: ${{ inputs.prerelease }}
+          AI_OUTCOME: ${{ steps.ai.outcome }}
+        run: |
+          set -euo pipefail
+          args=(--title "$TAG" --target "$GITHUB_SHA")
+          if [ "$AI_OUTCOME" = "success" ] && [ -s release-notes.md ]; then
+            echo "Using AI-generated release notes"
+            args+=(--notes-file release-notes.md)
+          else
+            echo "Falling back to auto-generated notes"
+            args+=(--generate-notes)
+            if [ "$PREVIOUS" != "v0.0.0" ]; then
+              args+=(--notes-start-tag "$PREVIOUS")
+            fi
+          fi
+          if [ "$PRERELEASE" = "true" ]; then
+            args+=(--prerelease)
+          fi
+          gh release create "$TAG" "${args[@]}"
