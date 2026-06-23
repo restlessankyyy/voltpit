@@ -72,6 +72,12 @@ resource "random_password" "stream_token" {
 resource "azurerm_resource_group" "rg" {
   name     = "${var.name_prefix}-rg"
   location = var.location
+
+  # Governance tags (costCode, environment, supportedBy) are applied out of band
+  # by Azure Policy. Ignore them so Terraform does not strip them on apply.
+  lifecycle {
+    ignore_changes = [tags]
+  }
 }
 
 resource "azurerm_log_analytics_workspace" "law" {
@@ -80,6 +86,10 @@ resource "azurerm_log_analytics_workspace" "law" {
   resource_group_name = azurerm_resource_group.rg.name
   sku                 = "PerGB2018"
   retention_in_days   = 30
+
+  lifecycle {
+    ignore_changes = [tags]
+  }
 }
 
 resource "azurerm_container_registry" "acr" {
@@ -88,6 +98,10 @@ resource "azurerm_container_registry" "acr" {
   resource_group_name = azurerm_resource_group.rg.name
   sku                 = "Basic"
   admin_enabled       = false
+
+  lifecycle {
+    ignore_changes = [tags]
+  }
 }
 
 # Managed identity the Container App uses to pull from ACR (no admin creds).
@@ -95,6 +109,10 @@ resource "azurerm_user_assigned_identity" "app" {
   name                = "${var.name_prefix}-id"
   location            = azurerm_resource_group.rg.location
   resource_group_name = azurerm_resource_group.rg.name
+
+  lifecycle {
+    ignore_changes = [tags]
+  }
 }
 
 resource "azurerm_role_assignment" "acr_pull" {
@@ -111,7 +129,7 @@ resource "azurerm_role_assignment" "acr_pull" {
 # geo-replication, manual failover only, local (LRS) backup.
 resource "azurerm_cosmosdb_account" "events" {
   count               = var.enable_cosmos ? 1 : 0
-  name                = "${var.name_prefix}-cosmos-${local.suffix}"
+  name                = "voltpit-events-${local.suffix}"
   location            = azurerm_resource_group.rg.location
   resource_group_name = azurerm_resource_group.rg.name
   offer_type          = "Standard"
@@ -202,7 +220,12 @@ resource "azurerm_cosmosdb_sql_role_assignment" "events_writer" {
   account_name        = azurerm_cosmosdb_account.events[0].name
   role_definition_id  = azurerm_cosmosdb_sql_role_definition.events_writer[0].id
   principal_id        = azurerm_user_assigned_identity.app.principal_id
-  scope               = azurerm_cosmosdb_sql_container.events[0].id
+
+  # Cosmos data-plane RBAC requires a data-plane scope (dbs/.../colls/...), not
+  # the ARM-style container resource ID (sqlDatabases/.../containers/...).
+  # Build it from the account ID so the assignment stays scoped to the single
+  # events container for least privilege.
+  scope = "${azurerm_cosmosdb_account.events[0].id}/dbs/${azurerm_cosmosdb_sql_database.events[0].name}/colls/${azurerm_cosmosdb_sql_container.events[0].name}"
 }
 
 # Build and push the backend image locally with Docker buildx (fast path).
@@ -228,6 +251,10 @@ resource "azurerm_container_app_environment" "env" {
   location                   = azurerm_resource_group.rg.location
   resource_group_name        = azurerm_resource_group.rg.name
   log_analytics_workspace_id = azurerm_log_analytics_workspace.law.id
+
+  lifecycle {
+    ignore_changes = [tags]
+  }
 }
 
 resource "azurerm_container_app" "app" {
@@ -310,4 +337,8 @@ resource "azurerm_container_app" "app" {
     azurerm_cosmosdb_sql_role_assignment.events_writer,
     terraform_data.image_build,
   ]
+
+  lifecycle {
+    ignore_changes = [tags]
+  }
 }
