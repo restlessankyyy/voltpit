@@ -1,0 +1,45 @@
+name: iOS Build
+
+# Verify the SwiftUI app compiles. The project is generated from project.yml by
+# xcodegen and uses Apple MapKit (no API keys), so a simulator build needs no
+# secrets or code signing.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "ios/**"
+      - ".github/workflows/ios-build.yml"
+  pull_request:
+    paths:
+      - "ios/**"
+      - ".github/workflows/ios-build.yml"
+
+defaults:
+  run:
+    working-directory: ios
+
+jobs:
+  build:
+    name: Build (simulator)
+    runs-on: macos-15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Build for simulator
+        run: |
+          xcodebuild \
+            -project TeslaDash.xcodeproj \
+            -scheme TeslaDash \
+            -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            build
