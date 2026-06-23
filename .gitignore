@@ -1,0 +1,44 @@
+# ── Secrets & local state (never commit) ─────────────────────────────────────
+# Belt-and-suspenders: subdirectories also have their own .gitignore.
+.env
+.env.*
+!.env.example
+.tokens.json
+*.tokens.json
+keys/
+*.pem
+*.key
+*.p8
+*.mobileprovision
+*.cer
+*.certSigningRequest
+
+# Terraform state & vars (may contain credentials / subscription data)
+**/.terraform/
+**/.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+crash.log
+
+# Internal Azure deployment notes (subscription IDs, account names, live FQDNs)
+.azure/
+
+# iOS secrets & generated project
+**/Secrets.xcconfig
+ios/TeslaDash.xcodeproj/
+
+# ── Build artifacts & caches ─────────────────────────────────────────────────
+node_modules/
+dist/
+build/
+DerivedData/
+.build/
+*.log
+xcuserdata/
+*.xcuserstate
+
+# ── OS / editor cruft ────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db

@@ -1,0 +1,14 @@
+# Copy to terraform.tfvars and fill in. Do NOT commit terraform.tfvars.
+
+subscription_id = "00000000-0000-0000-0000-000000000000"
+location        = "swedencentral"
+name_prefix     = "tesladash"
+
+# First deploy: simulator (no Tesla creds needed).
+source_mode  = "simulator"
+primary_unit = "kmh"
+
+# --- Only needed later, when source_mode = "tesla" ---
+# tesla_client_id     = ""
+# tesla_client_secret = ""
+# tesla_vin           = ""
