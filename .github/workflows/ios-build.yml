@@ -44,6 +44,20 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             build
 
+      - name: Run unit tests
+        run: |
+          DEVICE_ID=$(xcrun simctl list devices available --json \
+            | python3 -c "import sys, json; d = json.load(sys.stdin)['devices']; ids = [dev['udid'] for rt in d for dev in d[rt] if dev.get('isAvailable') and 'iPhone' in dev['name']]; print(ids[0])")
+          echo "Testing on simulator $DEVICE_ID"
+          xcodebuild \
+            -project TeslaDash.xcodeproj \
+            -scheme TeslaDash \
+            -configuration Debug \
+            -destination "id=$DEVICE_ID" \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            test
+
   # ---------------------------------------------------------------------------
   # Signed device build uploaded to TestFlight. A GitHub runner cannot install
   # onto your physical iPhone directly, so distribution goes through App Store
