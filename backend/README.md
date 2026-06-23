@@ -1,4 +1,4 @@
-# Tesla Dash — Backend
+# Voltpit: Backend
 
 Node + TypeScript service that turns your car's data into a realtime WebSocket
 stream the iPhone app consumes. It abstracts the data source so you can run with
@@ -23,7 +23,7 @@ All config is via `.env` (see [`.env.example`](.env.example)). Key values:
 | `SOURCE` | `simulator` or `tesla`. |
 | `PORT` | HTTP + WebSocket port (default 8080). |
 | `POLL_INTERVAL_MS` | How often to poll Tesla `vehicle_data` while driving. |
-| `PRIMARY_UNIT` | `mph` or `kph` — which speed the app shows large. |
+| `PRIMARY_UNIT` | `mph` or `kph`: which speed the app shows large. |
 | `TESLA_*` | Fleet API credentials (only for `SOURCE=tesla`). |
 
 ## The stream contract
@@ -60,10 +60,10 @@ flowchart LR
     WS --> App["iPhone app"]
 ```
 
-- [`src/sources/`](src/sources/) — pluggable data sources behind a common interface.
-- [`src/tesla/`](src/tesla/) — OAuth, the Fleet API client, and token persistence.
-- [`src/routes/`](src/routes/) — `/auth/*` (OAuth) and the `.well-known` public key.
-- [`src/wsHub.ts`](src/wsHub.ts) — fan-out to all connected apps; replays last state on connect.
+- [`src/sources/`](src/sources/): pluggable data sources behind a common interface.
+- [`src/tesla/`](src/tesla/): OAuth, the Fleet API client, and token persistence.
+- [`src/routes/`](src/routes/): `/auth/*` (OAuth) and the `.well-known` public key.
+- [`src/wsHub.ts`](src/wsHub.ts): fan-out to all connected apps; replays last state on connect.
 
 ## Switching to your real Tesla
 

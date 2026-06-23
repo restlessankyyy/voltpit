@@ -1,4 +1,4 @@
-# Tesla Dash — iPhone app
+# Voltpit: iPhone app
 
 Native SwiftUI app: a full-screen Apple map that follows your heading with a
 big Tesla-style speedometer and gear / battery / power readouts overlaid. It
@@ -48,10 +48,10 @@ Pick an iPhone simulator (or your device) and Run.
 decodes each `vehicle_state` message, and publishes it. `DashboardView` observes
 it and drives:
 
-- **Speedometer** — large number + arc gauge fill.
-- **Map** — camera recenters on the car and rotates so travel is "up"; a blue
+- **Speedometer**: large number + arc gauge fill.
+- **Map**: camera recenters on the car and rotates so travel is "up"; a blue
   arrow marks position.
-- **Pills** — connection (Live/Asleep/Offline), gear `P R N D`, power kW, battery %.
+- **Pills**: connection (Live/Asleep/Offline), gear `P R N D`, power kW, battery %.
 
 If the socket drops it reconnects with exponential backoff, so a flaky cellular
 connection in the car self-heals.

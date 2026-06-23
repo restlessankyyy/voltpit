@@ -1,20 +1,19 @@
-# Tesla Dash
+# Voltpit
 
 A Tesla Model Y style driving dashboard for iPhone: a big speedometer over a live
 Apple Map that follows your heading, fed by **your** car's data through the
 **Tesla Fleet API** with realtime updates over WebSocket.
 
-```
-┌──────────────────────────────┐        ┌──────────────────────┐        ┌─────────────────┐
-│  Tesla vehicle (your Model Y)│ ──────▶│  Tesla Fleet API      │◀──────│  backend (Node)  │
-└──────────────────────────────┘        └──────────────────────┘  poll  │  OAuth + tokens  │?
-                                                                          │  WebSocket hub   │
-                                                                          └────────┬─────────┘
-                                                                                   │ ws://…/stream
-                                                                          ┌────────▼─────────┐
-                                                                          │ iPhone app (SwiftUI)
-                                                                          │ Apple Map + dial   │
-                                                                          └────────────────────┘
+```mermaid
+flowchart LR
+    car["Tesla vehicle<br/>(your Model Y)"]
+    fleet["Tesla Fleet API"]
+    backend["backend (Node)<br/>OAuth + tokens<br/>WebSocket hub"]
+    app["iPhone app (SwiftUI)<br/>Apple Map + speedometer dial"]
+
+    car --> fleet
+    backend -->|poll vehicle_data| fleet
+    backend -->|ws://…/stream| app
 ```
 
 ## Repo layout
@@ -26,7 +25,7 @@ Apple Map that follows your heading, fed by **your** car's data through the
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | System overview, realtime data-flow diagram, and component responsibilities. |
 | [`docs/TESLA_FLEET_API_SETUP.md`](docs/TESLA_FLEET_API_SETUP.md) | Step-by-step Tesla Fleet API onboarding (developer app, keys, OAuth, scopes). |
 
-## Quick start (simulator mode — see the UI today)
+## Quick start (simulator mode: see the UI today)
 
 You can run the entire thing with **fake but realistic** driving data, no Tesla
 account required, then flip a switch to use your real car later.
