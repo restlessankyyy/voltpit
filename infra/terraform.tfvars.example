@@ -8,6 +8,12 @@ name_prefix     = "tesladash"
 source_mode  = "simulator"
 primary_unit = "kmh"
 
+# --- Cosmos DB event persistence (optional) ---
+# Set to true to provision the free-tier Cosmos account + container that
+# persists streamed telemetry events. Only one free-tier account is allowed per
+# subscription. Leave false to skip persistence entirely.
+# enable_cosmos = true
+
 # --- Only needed later, when source_mode = "tesla" ---
 # tesla_client_id     = ""
 # tesla_client_secret = ""
